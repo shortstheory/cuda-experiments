@@ -7,97 +7,7 @@
 #include <cooperative_groups.h>
 #include <iostream>
 #include <string>  // Required for std::stoi()
-constexpr int TILE = 128;
-__global__ void simpleReduce1(float* out, float* data, int size)
-{
-    int idx = blockDim.x*blockIdx.x + threadIdx.x;
-    float threadSum = 0.0;
-    if (idx < size)
-    {
-        threadSum = data[idx];
-    }
-    __shared__ float s;
-    if (threadIdx.x == 0)
-    {
-        s = 0.f;
-    }
-    __syncthreads();
-    for (int i = 0; i < blockDim.x; i++)
-    {
-        if (threadIdx.x == i)
-        {
-            s += threadSum;
-            // printf("threadIdx.x %d Val %f s %f\n", threadIdx.x, threadSum, s);
-        }
-        __syncthreads();
-    }
-    if (threadIdx.x == 0)
-    {
-        // atomicAdd(out, s);
-        data[blockDim.x*blockIdx.x] = s;
-    }
-}
-
-__global__ void simpleReduce14float(float* out, float* data, int size)
-{
-    float4* data_f4 = reinterpret_cast<float4*>(data);
-    int idx = blockDim.x*blockIdx.x + threadIdx.x;
-    float threadSum = 0.0;
-    float4 val;
-    if (idx < size/4)
-    {
-        val = data_f4[idx];
-        threadSum = val.x + val.y + val.z + val.w;
-    }
-    __shared__ float s;
-    if (threadIdx.x == 0)
-    {
-        s = 0.f;
-    }
-    __syncthreads();
-    for (int i = 0; i < blockDim.x; i++)
-    {
-        __syncthreads();
-        if (threadIdx.x == i)
-        {
-            s += threadSum;
-            // printf("threadIdx.x %d Val %f s %f\n", threadIdx.x, threadSum, s);
-        }
-        __syncthreads();
-    }
-    if (threadIdx.x == 0)
-    {
-        // atomicAdd(out, s);
-        data[blockDim.x*blockIdx.x] = s;
-    }
-}
-
-
-__global__ void simpleReduce2(float* out, float* data, int size)
-{
-    __shared__ float buffer[TILE];
-    int idx = blockDim.x*blockIdx.x + threadIdx.x;
-    if (idx < size)
-    {
-        buffer[threadIdx.x] = data[idx];
-    } else {
-        buffer[threadIdx.x] = 0.f;
-    }
-    __syncthreads();
-    for (int s = 1; s < blockDim.x; s++)
-    {
-        if (threadIdx.x == 0)
-        {
-            buffer[0] += buffer[s];
-        }
-        __syncthreads();
-    }
-    if (threadIdx.x == 0)
-    {
-        // atomicAdd(out, buffer[0]);
-        data[blockDim.x*blockIdx.x] = buffer[0];
-    }
-}
+constexpr int TILE = 512;
 
 namespace cg = cooperative_groups;
 using namespace cooperative_groups; // or...
@@ -135,27 +45,39 @@ __global__ void bigReduce(float* out, float* data, int size)
         {
             blockVal += threadBuffer[i];
         }
-        data[blockIdx.x] = blockVal;
-        // atomicAdd(out, blockVal);  
+        atomicAdd(out, blockVal);  
     }
 }   
 
-__global__ void bigReduceNoFloat4(float* out, float* data, int size)
+__global__ void bigReduceBlockLoad(float* out, float* data, int size)
 {
-    int idx = blockDim.x*blockIdx.x + threadIdx.x;
+    constexpr int ELEMENTS_PER_THREAD = TILE/PARTITION_SIZE;
+
+    float* dataPtr = data + blockDim.x*blockIdx.x*ELEMENTS_PER_THREAD;
     float threadSum = 0.0;
-    if (idx < size)
+    typedef cub::BlockLoad<float, TILE, ELEMENTS_PER_THREAD,
+                        cub::BLOCK_LOAD_VECTORIZE>
+    BlockLoad;
+    __shared__ typename BlockLoad::TempStorage ts_load;
+    float mval[ELEMENTS_PER_THREAD];
+    // printf("Starting kernel\n");
+
+    BlockLoad(ts_load).Load(dataPtr, mval, size-  blockDim.x*blockIdx.x*ELEMENTS_PER_THREAD, 0);  
+    __syncthreads();
+
+    #pragma unroll
+    for (int i = 0; i < ELEMENTS_PER_THREAD; i++)
     {
-        threadSum = data[idx];
+        // printf("threadIdx.x %d i %d mval %f\n", threadIdx.x, i, mval[i]); 
+        threadSum += mval[i];
     }
+
     auto tile32 = cg::tiled_partition<PARTITION_SIZE>(this_thread_block());
     #pragma unroll
     for (int i = PARTITION_SIZE/2; i > 0; i /= 2) {
-        // only template version has it wtf
         threadSum += tile32.shfl_down(threadSum, i);
     }
-    constexpr int SIZE =TILE/PARTITION_SIZE;
-    __shared__ float threadBuffer[SIZE];
+    __shared__ float threadBuffer[ELEMENTS_PER_THREAD];
     if (tile32.thread_rank() == 0)
     {
         threadBuffer[tile32.meta_group_rank()] = threadSum;
@@ -165,14 +87,66 @@ __global__ void bigReduceNoFloat4(float* out, float* data, int size)
     if (threadIdx.x == 0)
     {
         #pragma unroll
-        for (size_t i = 0; i < SIZE; i++)
+        for (size_t i = 0; i < ELEMENTS_PER_THREAD; i++)
         {
             blockVal += threadBuffer[i];
         }
-        data[blockDim.x*blockIdx.x] = blockVal;
-        // atomicAdd(out, blockVal);  
+        atomicAdd(out, blockVal);  
     }
 }   
+
+template <unsigned int blockSize>
+__device__ void warpReduce(volatile float *sdata, unsigned int tid) {
+ if (blockSize >= 64)
+   sdata[tid] += sdata[tid + 32];
+ if (blockSize >= 32)
+   sdata[tid] += sdata[tid + 16];
+ if (blockSize >= 16)
+   sdata[tid] += sdata[tid + 8];
+ if (blockSize >= 8)
+   sdata[tid] += sdata[tid + 4];
+ if (blockSize >= 4)
+   sdata[tid] += sdata[tid + 2];
+ if (blockSize >= 2)
+   sdata[tid] += sdata[tid + 1];
+}
+
+
+template <unsigned int blockSize>
+__global__ void reduce6(float *g_odata, float *g_idata, unsigned int n) {
+ extern __shared__ float sdata[];
+ unsigned int tid = threadIdx.x;
+ unsigned int i = blockIdx.x * (blockSize * 2) + tid;
+ unsigned int gridSize = blockSize * 2 * gridDim.x;
+ sdata[tid] = 0;
+ while (i < n) {
+   sdata[tid] += g_idata[i] + g_idata[i + blockSize];
+   i += gridSize;
+ }
+ __syncthreads();
+ if (blockSize >= 512) {
+   if (tid < 256) {
+     sdata[tid] += sdata[tid + 256];
+   }
+   __syncthreads();
+ }
+ if (blockSize >= 256) {
+   if (tid < 128) {
+     sdata[tid] += sdata[tid + 128];
+   }
+   __syncthreads();
+ }
+ if (blockSize >= 128) {
+   if (tid < 64) {
+     sdata[tid] += sdata[tid + 64];
+   }
+   __syncthreads();
+ }
+ if (tid < 32)
+   warpReduce<blockSize>(sdata, tid);
+ if (tid == 0)
+   atomicAdd(g_odata, sdata[0]);
+}
 
 
 int main(int argc, char **argv)
@@ -188,44 +162,32 @@ int main(int argc, char **argv)
     float* gpuData;
     float* gpuRes;
     float gpuResultOnCpu;
-    cudaMallocHost(&gpuData, n*sizeof(float));
-    cudaMallocHost(&gpuRes, sizeof(float));
-    cudaMemset(gpuRes, 0, sizeof(float));
+    cudaMalloc(&gpuData, n*sizeof(float));
+    cudaMalloc(&gpuRes, sizeof(float));
     double res = 0.f;
     for (int i = 0; i < n; i++)
     {
         data[i] = i;
-        // data[i] = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
     }
 
     cudaMemcpy(gpuData, data, n*sizeof(float), cudaMemcpyHostToDevice);
     
     int numBlocks = n/TILE+1;
     
-    // simpleReduce1<<<numBlocks, TILE>>>(gpuRes, gpuData, n);
-    // cudaMemcpy(&gpuResultOnCpu, gpuRes, sizeof(float), cudaMemcpyDeviceToHost);
-    // std::cout << "Gpu1: " << gpuResultOnCpu << std::endl;
-
-    // cudaMemset(gpuRes, 0, sizeof(float));
-    // simpleReduce14float<<<n/(4*TILE)+1, TILE>>>(gpuRes, gpuData, n);
-    // cudaMemcpy(&gpuResultOnCpu, gpuRes, sizeof(float), cudaMemcpyDeviceToHost);
-    // std::cout << "Gpu2: " << gpuResultOnCpu << std::endl;
-
-    // cudaMemset(gpuRes, 0, sizeof(float));
-    // simpleReduce2<<<numBlocks,TILE>>>(gpuRes, gpuData, n);
-    // cudaMemcpy(&gpuResultOnCpu, gpuRes, sizeof(float), cudaMemcpyDeviceToHost);
-    // std::cout << "Gpu3: " << gpuResultOnCpu << std::endl;
-
     cudaMemset(gpuRes, 0, sizeof(float));
     bigReduce<<<n/(4*TILE)+1, TILE>>>(gpuRes, gpuData, n);
     cudaMemcpy(&gpuResultOnCpu, gpuRes, sizeof(float), cudaMemcpyDeviceToHost);
-    std::cout << "Gpu4: " << gpuResultOnCpu << std::endl;
+    std::cout << "BigReduce: " << gpuResultOnCpu << std::endl;
 
-    // cudaMemset(gpuRes, 0, sizeof(float));
-    // bigReduceNoFloat4<<<numBlocks, TILE>>>(gpuRes, gpuData, n);
-    // cudaMemcpy(&gpuResultOnCpu, gpuRes, sizeof(float), cudaMemcpyDeviceToHost);
-    // std::cout << "Gpu5: " << gpuResultOnCpu << std::endl;
+    cudaMemset(gpuRes, 0, sizeof(float));
+    bigReduceBlockLoad<<<n/(4*TILE)+1, TILE>>>(gpuRes, gpuData, n);
+    cudaMemcpy(&gpuResultOnCpu, gpuRes, sizeof(float), cudaMemcpyDeviceToHost);
+    std::cout << "bigReduceBlockLoad: " << gpuResultOnCpu << std::endl;
 
+    cudaMemset(gpuRes, 0, sizeof(float));
+    reduce6<TILE><<<numBlocks, TILE, TILE * sizeof(int)>>>(gpuRes, gpuData, n);
+    cudaMemcpy(&gpuResultOnCpu, gpuRes, sizeof(float), cudaMemcpyDeviceToHost);
+    std::cout << "reduce6: " << gpuResultOnCpu << std::endl;
 
     for (int i = 0; i < n; i++)
     {
