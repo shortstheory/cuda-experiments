@@ -41,6 +41,8 @@ __global__ void myBlockScan(float *data, int n) {
 
 __global__ void myShuffleScan(float *data, int n) {
     __shared__ float sharedData[1024/PARTITION_SIZE];
+    // __shared__ float sharedData2[1024/PARTITION_SIZE];
+
     int idx = threadIdx.x;
     float threadValue = 0.f;
     if (idx < n)
@@ -52,7 +54,6 @@ __global__ void myShuffleScan(float *data, int n) {
 
     #pragma unroll
     for (int i = 1; i < PARTITION_SIZE; i *= 2) {
-        // only template version has it wtf
         float temp = tile.shfl_up(threadValue, i);
         if (idx % PARTITION_SIZE >= i)
         {
@@ -65,19 +66,15 @@ __global__ void myShuffleScan(float *data, int n) {
     }
     __syncthreads();
 
-    // for (int i = 1; i < PARTITION_SIZE; i *= 2) {
-    //     // only template version has it wtf
-    //     float temp = tile.shfl_up(threadValue, i);
-    //     if (idx % PARTITION_SIZE >= i)
-    //     {
-    //         threadValue += temp;
-    //     }
-    // }
-    if (threadIdx.x == 0)
+    if (idx < PARTITION_SIZE)
     {
-        for (int i = 1; i < 1024/PARTITION_SIZE; i++)
-        {
-            sharedData[i] += sharedData[i-1];
+        #pragma unroll
+        for (int i = 1; i < PARTITION_SIZE; i *= 2) {
+            float temp = tile.shfl_up(sharedData[tile.thread_rank()], i);
+            if (tile.thread_rank() % PARTITION_SIZE >= i)
+            {
+                sharedData[tile.thread_rank()] += temp;
+            }
         }
     }
     __syncthreads();
@@ -111,22 +108,26 @@ int main(int argc, char **argv)
     }
 
     cudaMemcpy(gpuData, data, n*sizeof(float), cudaMemcpyHostToDevice);
-    // myBlockScan<<<1,1024>>>(gpuData,n);
+    myBlockScan<<<1,1024>>>(gpuData,n);
+
+    cudaMemcpy(gpuData, data, n*sizeof(float), cudaMemcpyHostToDevice);
     myShuffleScan<<<1,1024>>>(gpuData,n);
+
     cudaMemcpy(gpuResultCpu, gpuData, n*sizeof(float), cudaMemcpyDeviceToHost);
+
     for (int i = 1; i < n; i++)
     {
         data[i] = data[i] + data[i-1];
     }
     for (int i = 0; i < n; i++)
     {
-        std::cout << data[i] << " ";
+        std::cout << i << " " << data[i] << " " << gpuResultCpu[i] << std::endl;
     }
-    std::cout << std::endl;
-    for (int i = 0; i < n; i++)
-    {
-        std::cout << gpuResultCpu[i] << " ";
-    }
+    // std::cout << std::endl;
+    // for (int i = 0; i < n; i++)
+    // {
+    //     std::cout << i << " " <<  << " " << std::endl;
+    // }
 
     return 0;
 }
