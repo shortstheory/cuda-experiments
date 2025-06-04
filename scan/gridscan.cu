@@ -33,7 +33,15 @@ __global__ void myShuffleScan(float *data, int* blockCounter, BlockState* blockS
        sBlockNum = atomicAdd(blockCounter, 1);
        sPrefixSumIndex = max(sBlockNum-1,0);
    }
-   data = data + sBlockNum * blockDim.x;
+   __syncthreads();
+   int offset = blockIdx.x * blockDim.x;
+   int offset1 = sBlockNum * blockDim.x;
+
+   if (threadIdx.x == 0)
+   {
+        printf("Offset %d offset1 %d\n",offset,offset1);
+   }
+   data = data + offset1;
 
 
    __shared__ float sharedData[BLOCK_SIZE/PARTITION_SIZE];
@@ -79,13 +87,13 @@ __global__ void myShuffleScan(float *data, int* blockCounter, BlockState* blockS
    __syncthreads();
 
 
-   if (idx > PARTITION_SIZE)
+   if (idx >= PARTITION_SIZE)
    {
        threadValue += sharedData[idx/PARTITION_SIZE-1];
    }
 
-
-   if (idx+1 % PARTITION_SIZE == 0 || idx + 1 == n)
+/*
+   if ((idx+1) % BLOCK_SIZE == 0 || idx + 1 == n)
    {
        if (sBlockNum > 0)
        {
@@ -97,6 +105,7 @@ __global__ void myShuffleScan(float *data, int* blockCounter, BlockState* blockS
            blockStates[0] = BLOCK_SUM_DONE;
            blockResults[0] = threadValue;
        }
+         printf("Index %d Val %f\n", sBlockNum, blockResults[sBlockNum]);
    }
 
 
@@ -112,12 +121,13 @@ __global__ void myShuffleScan(float *data, int* blockCounter, BlockState* blockS
      }
      sPrefixSum += blockResults[sPrefixSumIndex];
      blockStates[sBlockNum] = BLOCK_SUM_DONE;
+     printf("Index %d Val %f\n", sBlockNum, sPrefixSum);
    }
-
+*/
 
    if (idx < n)
    {
-       data[idx] = threadValue+sPrefixSum;
+       data[idx] = threadValue;//+sPrefixSum;
    }
 }
 
@@ -133,7 +143,7 @@ int main(int argc, char **argv)
    {
        n = std::stoi(argv[1]);
    }
-   int numBlocks = n / BLOCK_SIZE + 1;
+   int numBlocks = (n + BLOCK_SIZE -1) / BLOCK_SIZE;
    std::cout << "N: " << n << std::endl;
    float* data = new float[n];
    float* gpuResultCpu = new float[n];
@@ -158,7 +168,7 @@ int main(int argc, char **argv)
 
 
    cudaMemcpy(gpuData, data, n*sizeof(float), cudaMemcpyHostToDevice);
-   myShuffleScan<<<100, BLOCK_SIZE>>>(gpuData, blockCounterGpu, blockStatesGpu,
+   myShuffleScan<<<numBlocks, BLOCK_SIZE>>>(gpuData, blockCounterGpu, blockStatesGpu,
                                       blockResultGpu, n);
 
 
