@@ -27,22 +27,17 @@ enum BlockState {
 
 __global__ void myShuffleScan(float *data, int* blockCounter, BlockState* blockStates, float* blockResults, int n) {
    __shared__ int sBlockNum;
-   __shared__ int sPrefixSumIndex;
+   __shared__ int sLookbackIndex;
    if (threadIdx.x == 0)
    {
        sBlockNum = atomicAdd(blockCounter, 1);
-       sPrefixSumIndex = max(sBlockNum-1,0);
+       sLookbackIndex = max(sBlockNum-1,0);
    }
    __syncthreads();
    int offset = blockIdx.x * blockDim.x;
    int offset1 = sBlockNum * blockDim.x;
 
-   if (threadIdx.x == 0)
-   {
-        printf("Offset %d offset1 %d\n",offset,offset1);
-   }
    data = data + offset1;
-
 
    __shared__ float sharedData[BLOCK_SIZE/PARTITION_SIZE];
 
@@ -92,20 +87,13 @@ __global__ void myShuffleScan(float *data, int* blockCounter, BlockState* blockS
        threadValue += sharedData[idx/PARTITION_SIZE-1];
    }
 
-/*
+
    if ((idx+1) % BLOCK_SIZE == 0 || idx + 1 == n)
    {
-       if (sBlockNum > 0)
-       {
-         blockStates[sBlockNum] = BLOCK_SUM_READY;
-         blockResults[sBlockNum] = threadValue;
-       }
-       else
-       {
-           blockStates[0] = BLOCK_SUM_DONE;
-           blockResults[0] = threadValue;
-       }
-         printf("Index %d Val %f\n", sBlockNum, blockResults[sBlockNum]);
+       blockResults[sBlockNum] = threadValue;
+        __threadfence();
+        blockStates[sBlockNum] = sBlockNum > 0 ? BLOCK_SUM_READY : BLOCK_SUM_DONE;
+        // printf("Index %d Val %f\n", sBlockNum, blockResults[sBlockNum]);
    }
 
 
@@ -113,21 +101,26 @@ __global__ void myShuffleScan(float *data, int* blockCounter, BlockState* blockS
    if (threadIdx.x == 0)
    {
      sPrefixSum = 0.f;
-     while (blockStates[sPrefixSumIndex] != BLOCK_SUM_DONE) {
-       if (blockStates[sPrefixSumIndex] == BLOCK_SUM_READY) {
-         sPrefixSum += blockResults[sPrefixSumIndex];
-       }
-       sPrefixSumIndex--;
-     }
-     sPrefixSum += blockResults[sPrefixSumIndex];
-     blockStates[sBlockNum] = BLOCK_SUM_DONE;
-     printf("Index %d Val %f\n", sBlockNum, sPrefixSum);
+     if (sBlockNum > 0)
+     {
+        while (blockStates[sLookbackIndex] != BLOCK_SUM_DONE) 
+        {
+            if (blockStates[sLookbackIndex] == BLOCK_SUM_READY) 
+            {
+                sPrefixSum += blockResults[sLookbackIndex];
+                sLookbackIndex--;
+            }
+        }
+        sPrefixSum += blockResults[sLookbackIndex];
+        blockStates[sBlockNum] = BLOCK_SUM_DONE;
+    }
+     printf("Index %d PrefixSumVal %f\n", sBlockNum*blockDim.x, sPrefixSum);
    }
-*/
+   __syncthreads();
 
    if (idx < n)
    {
-       data[idx] = threadValue;//+sPrefixSum;
+       data[idx] = threadValue+sPrefixSum;
    }
 }
 
