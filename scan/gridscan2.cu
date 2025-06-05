@@ -107,12 +107,6 @@ __global__ void myShuffleScan(float *data, int* blockCounter, BlockState* blockS
 
         while (vStates[sLookbackIndex] != BLOCK_SUM_DONE) 
         {
-            if (vStates[sLookbackIndex] == BLOCK_SUM_READY) 
-            {
-                sPrefixSum += vResults[sLookbackIndex];
-                // printf("sBlock %d lookbackIndex %d blockResult %f sum %f\n", sBlockNum, sLookbackIndex, vResults[sLookbackIndex], sPrefixSum);
-                sLookbackIndex--;
-            }
         }
         sPrefixSum += vResults[sLookbackIndex];
         // printf("Final sBlock %d lookbackIndex %d blockResult %f sum %f\n", sBlockNum, sLookbackIndex, vResults[sLookbackIndex], sPrefixSum);
@@ -181,7 +175,7 @@ int main(int argc, char **argv)
    }
    for (int i = 0; i < n; i++)
    {
-       std::cout << i << " " << data[i] << " " << gpuResultCpu[i] << std::endl;
+    //    std::cout << i << " " << data[i] << " " << gpuResultCpu[i] << std::endl;
    }
    // std::cout << std::endl;
    // for (int i = 0; i < n; i++)
