@@ -1,0 +1,28 @@
+Index 0 PrefixSumVal 0.000000
+Final sBlock 1 lookbackIndex 0 blockResult 128.000000 sum 128.000000
+sBlock 4 lookbackIndex 3 blockResult 128.000000 sum 128.000000
+sBlock 2 lookbackIndex 1 blockResult 128.000000 sum 128.000000
+sBlock 5 lookbackIndex 4 blockResult 128.000000 sum 128.000000
+sBlock 3 lookbackIndex 2 blockResult 128.000000 sum 128.000000
+sBlock 6 lookbackIndex 5 blockResult 128.000000 sum 128.000000
+sBlock 7 lookbackIndex 6 blockResult 128.000000 sum 128.000000
+Index 1 PrefixSumVal 128.000000
+sBlock 3 lookbackIndex 1 blockResult 256.000000 sum 384.000000
+Final sBlock 2 lookbackIndex 0 blockResult 128.000000 sum 256.000000
+sBlock 4 lookbackIndex 2 blockResult 128.000000 sum 256.000000
+sBlock 5 lookbackIndex 3 blockResult 128.000000 sum 256.000000
+sBlock 7 lookbackIndex 5 blockResult 128.000000 sum 256.000000
+sBlock 6 lookbackIndex 4 blockResult 128.000000 sum 256.000000
+Index 2 PrefixSumVal 256.000000
+Final sBlock 3 lookbackIndex 0 blockResult 128.000000 sum 512.000000
+Final sBlock 4 lookbackIndex 1 blockResult 256.000000 sum 512.000000
+Final sBlock 5 lookbackIndex 2 blockResult 384.000000 sum 640.000000
+sBlock 7 lookbackIndex 4 blockResult 128.000000 sum 384.000000
+sBlock 6 lookbackIndex 3 blockResult 128.000000 sum 384.000000
+Index 3 PrefixSumVal 512.000000
+Index 4 PrefixSumVal 512.000000
+Index 5 PrefixSumVal 640.000000
+Final sBlock 7 lookbackIndex 3 blockResult 640.000000 sum 1024.000000
+Final sBlock 6 lookbackIndex 2 blockResult 384.000000 sum 768.000000
+Index 7 PrefixSumVal 1024.000000
+Index 6 PrefixSumVal 768.000000
