@@ -14,7 +14,7 @@ constexpr int TILE = 512;
 namespace cg = cooperative_groups;
 using namespace cooperative_groups; // or...
 using cooperative_groups::thread_group; // etc.
-constexpr int PARTITION_SIZE = 32;
+constexpr int PARTITION_SIZE = 4;
 constexpr int BLOCK_SIZE = PARTITION_SIZE*4;
 
 
@@ -90,9 +90,9 @@ __global__ void myShuffleScan(float *data, int* blockCounter, BlockState* blockS
    if ((idx+1) % BLOCK_SIZE == 0 || idx + 1 == n)
    {
         blockResults[sBlockNum] = threadValue;
-        blockStates[sBlockNum] = sBlockNum > 0 ? BLOCK_SUM_READY : BLOCK_SUM_DONE;
         __threadfence();
-
+        printf("blockIdx %d sBlock %d val %f threadVal %f\n", blockIdx.x, sBlockNum, blockResults[sBlockNum], threadValue);
+        blockStates[sBlockNum] = sBlockNum > 0 ? BLOCK_SUM_READY : BLOCK_SUM_DONE;
    }
 
 
@@ -110,18 +110,18 @@ __global__ void myShuffleScan(float *data, int* blockCounter, BlockState* blockS
             if (vStates[sLookbackIndex] == BLOCK_SUM_READY) 
             {
                 sPrefixSum += vResults[sLookbackIndex];
-                // printf("sBlock %d lookbackIndex %d blockResult %f sum %f\n", sBlockNum, sLookbackIndex, vResults[sLookbackIndex], sPrefixSum);
+                printf("sBlock %d lookbackIndex %d blockResult %f blockState %d sum %f\n", sBlockNum, sLookbackIndex, blockResults[sLookbackIndex], vStates[sLookbackIndex], sPrefixSum);
                 sLookbackIndex--;
             }
         }
         sPrefixSum += vResults[sLookbackIndex];
-        // printf("Final sBlock %d lookbackIndex %d blockResult %f sum %f\n", sBlockNum, sLookbackIndex, vResults[sLookbackIndex], sPrefixSum);
         blockResults[sBlockNum] += sPrefixSum;
-        blockStates[sBlockNum] = BLOCK_SUM_DONE;
         __threadfence();
+        blockStates[sBlockNum] = BLOCK_SUM_DONE;
+        printf("Final sBlock %d lookbackIndex %d blockResult %f blockState %d sum %f\n", sBlockNum, sLookbackIndex, blockResults[sLookbackIndex],vStates[sLookbackIndex], sPrefixSum);
     }
 
-     // printf("Index %d PrefixSumVal %f\n", sBlockNum*blockDim.x, sPrefixSum);
+     printf("Index %d PrefixSumVal %f\n", sBlockNum, sPrefixSum);
    }
    __syncthreads(); 
 
@@ -163,7 +163,7 @@ int main(int argc, char **argv)
    std::cout << cudaGetErrorString(error) << std::endl;
    for (int i = 0; i < n; i++)
    {
-       data[i] = i;
+       data[i] = 1.f;
    }
 
 
