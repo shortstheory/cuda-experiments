@@ -168,15 +168,15 @@ int main(int argc, char **argv)
 
    cudaMemcpy(gpuResultCpu, gpuData, n*sizeof(float), cudaMemcpyDeviceToHost);
 
-
-   for (int i = 1; i < n; i++)
-   {
-       data[i] = data[i] + data[i-1];
-   }
-   for (int i = 0; i < n; i++)
-   {
-       std::cout << i << " " << data[i] << " " << gpuResultCpu[i] << std::endl;
-   }
+    cudaDeviceSynchronize();
+//    for (int i = 1; i < n; i++)
+//    {
+//        data[i] = data[i] + data[i-1];
+//    }
+//    for (int i = 0; i < n; i++)
+//    {
+//        std::cout << i << " " << data[i] << " " << gpuResultCpu[i] << std::endl;
+//    }
    // std::cout << std::endl;
    // for (int i = 0; i < n; i++)
    // {
