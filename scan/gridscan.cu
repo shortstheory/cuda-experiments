@@ -93,7 +93,7 @@ __global__ void myShuffleScan(float *data, int* blockCounter, BlockState* blockS
         __threadfence();
         blockStates[sBlockNum] = sBlockNum > 0 ? BLOCK_SUM_READY : BLOCK_SUM_DONE;
         __threadfence();
-        printf("Index %d Val %f\n", sBlockNum, blockResults[sBlockNum]);
+        // printf("Index %d Val %f\n", sBlockNum, blockResults[sBlockNum]);
    }
 
 
@@ -114,7 +114,7 @@ __global__ void myShuffleScan(float *data, int* blockCounter, BlockState* blockS
         sPrefixSum += blockResults[sLookbackIndex];
         blockStates[sBlockNum] = BLOCK_SUM_DONE;
     }
-     printf("Index %d PrefixSumVal %f\n", sBlockNum*blockDim.x, sPrefixSum);
+    //  printf("Index %d PrefixSumVal %f\n", sBlockNum*blockDim.x, sPrefixSum);
    }
    __syncthreads();
 
@@ -129,7 +129,7 @@ __global__ void myShuffleScan(float *data, int* blockCounter, BlockState* blockS
 
 int main(int argc, char **argv)
 {
-   int n = 128;
+   int n = 1280;
 
 
    if (argc > 1)
