@@ -98,8 +98,6 @@ __global__ void MatrixMultiplyKernel(
   // 6. Synchronize to make sure all threads are done computing the output tile for (row, col)
   // 7. Write the output to global memory
 
-  __shared__ float c_shared[TILE][TILE];
-  c_shared[threadIdx.x][threadIdx.y] = 0.f;
   int i = blockIdx.x;
   int j = blockIdx.y;  
   int aIndex[3];
@@ -110,6 +108,7 @@ __global__ void MatrixMultiplyKernel(
   cIndex[0] = batch;
   cIndex[1] = i*blockDim.x+threadIdx.x;
   cIndex[2] = j*blockDim.y+threadIdx.y;
+  float accum = 0.f;
 
   for (int k = 0; k < a_shape[2]; k+=TILE)
   {
@@ -130,23 +129,25 @@ __global__ void MatrixMultiplyKernel(
       if (bIndex[1] < b_shape[1] && bIndex[2] < b_shape[2])
       {
           int linearBIndex = index_to_position(bIndex, b_strides, 3);
-          b_shared[threadIdx.x][threadIdx.y] = b_storage[linearBIndex];
+          b_shared[threadIdx.y][threadIdx.x] = b_storage[linearBIndex];
       } else{
-          b_shared[threadIdx.x][threadIdx.y] = 0.f;
+          b_shared[threadIdx.y][threadIdx.x] = 0.f;
       }
       __syncthreads();
 
-      for (int tileIdx = 0; tileIdx < TILE; tileIdx++)
+      // float4* a_vec = reinterpret_cast<float4*>(a_shared[threadIdx.x]);
+      #pragma unroll
+      for (int tileIdx = 0; tileIdx < TILE/4; tileIdx++)
       {
-          c_shared[threadIdx.x][threadIdx.y] += a_shared[threadIdx.x][tileIdx]*b_shared[tileIdx][threadIdx.y];
+        // float4 a_val = a_vec[tileIdx];
+        accum += a_shared[threadIdx.x][tileIdx]*b_shared[threadIdx.y][tileIdx] + a_shared[threadIdx.x][tileIdx+1]*b_shared[threadIdx.y][tileIdx+1] +a_shared[threadIdx.x][tileIdx+2]*b_shared[threadIdx.y][tileIdx+2] + a_shared[threadIdx.x][tileIdx+3]*b_shared[threadIdx.y][tileIdx+3];
       }
-      // __syncthreads();
-
+      // c_shared[threadIdx.x][threadIdx.y] = accum;
   }
   if (cIndex[1] < out_shape[1] && cIndex[2] < out_shape[2])
   {
       int linearOutIndex = index_to_position(cIndex, out_strides, 3);
-      out[linearOutIndex] = c_shared[threadIdx.x][threadIdx.y];    
+      out[linearOutIndex] = accum;// c_shared[threadIdx.x][threadIdx.y];    
   }
   /// END ASSIGN1_2
 }
