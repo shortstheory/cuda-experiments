@@ -131,7 +131,6 @@ __global__ void MatrixMultiplyKernel(
     }
 
     aIndex[1] = cIndex[1];
-    bIndex[2] = cIndex[2];
     aIndex[2] = 0;
     int baseAIndex = index_to_position(aIndex, a_local_strides, 3);
 
@@ -139,39 +138,46 @@ __global__ void MatrixMultiplyKernel(
     {
         int threadY4Idx = threadIdx.y / 4;
         aIndex[2] = k + threadY4Idx;
-        bIndex[1] = k + threadIdx.x;
 
         float4 *a_shared4_ptr = reinterpret_cast<float4 *>(&a_shared[threadIdx.x][0]);
         float4 const *a_storage4_ptr = reinterpret_cast<float4 const *>(&a_storage[baseAIndex+k]);
 
-        if (aIndex[1] < a_local_shape[1] && aIndex[2] < a_local_shape[2])
+        if (threadIdx.y % 4 == 0)
         {
-            if (threadIdx.y % 4 == 0)
+            if (aIndex[1] < a_local_shape[1] && aIndex[2] < a_local_shape[2])
             {
-                a_shared4_ptr[threadY4Idx] = a_storage4_ptr[threadY4Idx];
+            a_shared4_ptr[threadY4Idx] = a_storage4_ptr[threadY4Idx];
+            }
+            else
+            {
+                a_shared4_ptr[threadY4Idx] = float4{0.f, 0.f, 0.f, 0.f};
             }
         }
-        else
+
+        bIndex[1] = k + threadIdx.x;
+        bIndex[2] = j * blockDim.y;
+        int baseBIndex = index_to_position(bIndex, b_local_strides, 3);
+        bIndex[2] += threadY4Idx;
+        float4 const *b_storage4_ptr = reinterpret_cast<float4 const *>(&b_storage[baseBIndex]);
+        float4 *b_shared4_ptr = reinterpret_cast<float4 *>(&b_shared[threadIdx.x][0]);
+
+        if (threadIdx.y % 4 == 0)
         {
-            a_shared4_ptr[threadY4Idx] = float4{0.f, 0.f, 0.f, 0.f};
-        }
-        if (bIndex[1] < b_local_shape[1] && bIndex[2] < b_local_shape[2])
-        {
-            int linearBIndex = index_to_position(bIndex, b_local_strides, 3);
-            b_shared[threadIdx.y][threadIdx.x] = b_storage[linearBIndex];
-        }
-        else
-        {
-            b_shared[threadIdx.y][threadIdx.x] = 0.f;
+            if (bIndex[1] < b_local_shape[1] && bIndex[2] < b_local_shape[2])
+            {
+                 b_shared4_ptr[threadY4Idx] = b_storage4_ptr[threadY4Idx];
+            }
+            else
+            {
+                b_shared4_ptr[threadY4Idx] = float4{0.f, 0.f, 0.f, 0.f};
+            }
         }
         __syncthreads();
 
-// float4* a_vec = reinterpret_cast<float4*>(a_shared[threadIdx.x]);
-#pragma unroll
+        #pragma unroll
         for (int tileIdx = 0; tileIdx < TILE / 4; tileIdx++)
         {
-            // float4 a_val = a_vec[tileIdx];
-            accum += a_shared[threadIdx.x][tileIdx] * b_shared[threadIdx.y][tileIdx] + a_shared[threadIdx.x][tileIdx + 1] * b_shared[threadIdx.y][tileIdx + 1] + a_shared[threadIdx.x][tileIdx + 2] * b_shared[threadIdx.y][tileIdx + 2] + a_shared[threadIdx.x][tileIdx + 3] * b_shared[threadIdx.y][tileIdx + 3];
+            accum += a_shared[threadIdx.x][tileIdx] * b_shared[tileIdx][threadIdx.y] + a_shared[threadIdx.x][tileIdx + 1] * b_shared[tileIdx + 1][threadIdx.y] + a_shared[threadIdx.x][tileIdx + 2] * b_shared[tileIdx + 2][threadIdx.y] + a_shared[threadIdx.x][tileIdx + 3] * b_shared[tileIdx + 3][threadIdx.y];
         }
     }
     if (cIndex[1] < out_local_shape[1] && cIndex[2] < out_local_shape[2])
