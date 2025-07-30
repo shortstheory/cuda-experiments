@@ -52,12 +52,51 @@ __global__ void MatrixMultiplyKernel(
   const int* b_shape,
   const int* b_strides
 ) {
+/**
+ * Multiply two (compact) matrices into an output (also comapct) matrix. Matrix a and b are both in a batch
+ * format, with shape [batch_size, m, n], [batch_size, n, p].
+ * Requirements:
+ * - All data must be first moved to shared memory.
+ * - Only read each cell in a and b once.
+ * - Only write to global memory once per kernel.
+ * There is guarantee that a_shape[0] == b_shape[0], a_shape[2] == b_shape[1],
+ * and out_shape[0] == a_shape[0], out_shape[1] == b_shape[1]
+ *
+ * Args:
+ *   out: compact 1D array of size batch_size x m x p to write the output to
+ *   out_shape: shape of the output array
+ *   out_strides: strides of the output array
+ *   a_storage: compact 1D array of size batch_size x m x n
+ *   a_shape: shape of the a array
+ *   a_strides: strides of the a array
+ *   b_storage: comapct 2D array of size batch_size x n x p
+ *   b_shape: shape of the b array
+ *   b_strides: strides of the b array
+ *
+ * Returns:
+ *   None (Fills in out array)
+ */
+
   __shared__ float a_shared[TILE][TILE+1];
   __shared__ float b_shared[TILE][TILE+1];
 
+  // In each block, we will compute a batch of the output matrix
+  // All the threads in the block will work together to compute this batch
   int batch = blockIdx.z;
   int a_batch_stride = a_shape[0] > 1 ? a_strides[0] : 0;
   int b_batch_stride = b_shape[0] > 1 ? b_strides[0] : 0;
+
+
+  /// BEGIN ASSIGN1_2
+  /// TODO
+  // Hints:
+  // 1. Compute the row and column of the output matrix this block will compute
+  // 2. Compute the position in the output array that this thread will write to
+  // 3. Iterate over tiles of the two input matrices, read the data into shared memory
+  // 4. Synchronize to make sure the data is available to all threads
+  // 5. Compute the output tile for this thread block
+  // 6. Synchronize to make sure all threads are done computing the output tile for (row, col)
+  // 7. Write the output to global memory
 
   int i = blockIdx.x;
   int j = blockIdx.y;  
@@ -71,30 +110,50 @@ __global__ void MatrixMultiplyKernel(
   cIndex[2] = j*blockDim.y+threadIdx.y;
   float accum = 0.f;
 
-  for (int k = 0; k < a_shape[2]; k+=TILE)
+  int a_local_shape[3];    
+  int a_local_strides[3];  
+  int b_local_shape[3];
+  int b_local_strides[3];
+   int out_local_shape[3];
+   int out_local_strides[3];
+  
+  for (int i = 0; i < 3; i++)
+  {
+    a_local_shape[i] = a_shape[i];
+    a_local_strides[i] = a_strides[i];
+    b_local_shape[i] = b_shape[i];
+    b_local_strides[i] = b_strides[i];
+    out_local_shape[i] = out_shape[i];
+    out_local_strides[i] = out_strides[i];
+  }
+
+
+  for (int k = 0; k < a_local_shape[2]; k+=TILE)
   {
       aIndex[1] = cIndex[1];
       aIndex[2] = k+threadIdx.y;
 
       bIndex[1] = k+threadIdx.x;
       bIndex[2] = cIndex[2];
+      // printf("A Index %d,%d B Index %d,%d\n",aIndex[1],aIndex[2],bIndex[1],bIndex[2]);
 
-      if (aIndex[1] < a_shape[1] && aIndex[2] < a_shape[2]) 
+      if (aIndex[1] < a_local_shape[1] && aIndex[2] < a_local_shape[2]) 
       {
-          int linearAIndex = index_to_position(aIndex, a_strides, 3);
+          int linearAIndex = index_to_position(aIndex, a_local_strides, 3);
           a_shared[threadIdx.x][threadIdx.y] = a_storage[linearAIndex];
       } else {
           a_shared[threadIdx.x][threadIdx.y] = 0.f;
       }
-      if (bIndex[1] < b_shape[1] && bIndex[2] < b_shape[2])
+      if (bIndex[1] < b_local_shape[1] && bIndex[2] < b_local_shape[2])
       {
-          int linearBIndex = index_to_position(bIndex, b_strides, 3);
+          int linearBIndex = index_to_position(bIndex, b_local_strides, 3);
           b_shared[threadIdx.y][threadIdx.x] = b_storage[linearBIndex];
       } else{
           b_shared[threadIdx.y][threadIdx.x] = 0.f;
       }
       __syncthreads();
 
+      // float4* a_vec = reinterpret_cast<float4*>(a_shared[threadIdx.x]);
       #pragma unroll
       for (int tileIdx = 0; tileIdx < TILE/4; tileIdx++)
       {
@@ -102,10 +161,10 @@ __global__ void MatrixMultiplyKernel(
         accum += a_shared[threadIdx.x][tileIdx]*b_shared[threadIdx.y][tileIdx] + a_shared[threadIdx.x][tileIdx+1]*b_shared[threadIdx.y][tileIdx+1] +a_shared[threadIdx.x][tileIdx+2]*b_shared[threadIdx.y][tileIdx+2] + a_shared[threadIdx.x][tileIdx+3]*b_shared[threadIdx.y][tileIdx+3];
       }
   }
-  if (cIndex[1] < out_shape[1] && cIndex[2] < out_shape[2])
+  if (cIndex[1] < out_local_shape[1] && cIndex[2] < out_local_shape[2])
   {
-      int linearOutIndex = index_to_position(cIndex, out_strides, 3);
-      out[linearOutIndex] = accum;
+      int linearOutIndex = index_to_position(cIndex, out_local_strides, 3);
+      out[linearOutIndex] = accum;// c_shared[threadIdx.x][threadIdx.y];    
   }
   /// END ASSIGN1_2
 }
