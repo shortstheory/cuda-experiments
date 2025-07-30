@@ -127,14 +127,13 @@ __global__ void MatrixMultiplyKernel(
     out_local_strides[i] = out_strides[i];
   }
 
+    aIndex[1] = cIndex[1];
+    bIndex[2] = cIndex[2];
 
   for (int k = 0; k < a_local_shape[2]; k+=TILE)
   {
-      aIndex[1] = cIndex[1];
       aIndex[2] = k+threadIdx.y;
-
       bIndex[1] = k+threadIdx.x;
-      bIndex[2] = cIndex[2];
       // printf("A Index %d,%d B Index %d,%d\n",aIndex[1],aIndex[2],bIndex[1],bIndex[2]);
 
       if (aIndex[1] < a_local_shape[1] && aIndex[2] < a_local_shape[2]) 
