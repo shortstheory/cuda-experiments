@@ -110,8 +110,7 @@ __global__ void MatrixMultiplyKernel(
     bIndex[0] = batch;
     cIndex[0] = batch;
     cIndex[1] = i * blockDim.x + threadIdx.x;
-    cIndex[2] = j * blockDim.y + threadIdx.y;
-    float accum = 0.f;
+    cIndex[2] = j * blockDim.y;
 
     int a_local_shape[3];
     int a_local_strides[3];
@@ -133,13 +132,15 @@ __global__ void MatrixMultiplyKernel(
     aIndex[1] = cIndex[1];
     aIndex[2] = 0;
     int baseAIndex = index_to_position(aIndex, a_local_strides, 3);
+    float4 accum = {0.f,0.f,0.f,0.f};
+    int threadY4Idx = threadIdx.y / 4;
 
     for (int k = 0; k < a_local_shape[2]; k += TILE)
     {
+        float4 *a_shared4_ptr = reinterpret_cast<float4 *>(&a_shared[threadIdx.x][0]);
+
         if (threadIdx.y % 4 == 0)
         {
-            int threadY4Idx = threadIdx.y / 4;
-            float4 *a_shared4_ptr = reinterpret_cast<float4 *>(&a_shared[threadIdx.x][0]);
             float4 const *a_storage4_ptr = reinterpret_cast<float4 const *>(&a_storage[baseAIndex + k]);
 
             const bool inRangeA{aIndex[1] < a_local_shape[1] && k + threadY4Idx < a_local_shape[2]};
@@ -155,19 +156,31 @@ __global__ void MatrixMultiplyKernel(
         }
         __syncthreads();
 
-        // if (threadIdx.y % 4 == 0)
+        if (threadIdx.y % 4 == 0)
         {
             #pragma unroll
-            for (int tileIdx = 0; tileIdx < TILE / 4; tileIdx++)
+            for (int tileIdx = 0; tileIdx < TILE; tileIdx+=4)
             {
-                accum += a_shared[threadIdx.x][tileIdx] * b_shared[tileIdx][threadIdx.y] + a_shared[threadIdx.x][tileIdx + 1] * b_shared[tileIdx + 1][threadIdx.y] + a_shared[threadIdx.x][tileIdx + 2] * b_shared[tileIdx + 2][threadIdx.y] + a_shared[threadIdx.x][tileIdx + 3] * b_shared[tileIdx + 3][threadIdx.y];
+                float4 avec = a_shared4_ptr[tileIdx/4];
+                float4 bvectile0 = *reinterpret_cast<float4 *>(&b_shared[tileIdx][threadIdx.y]);
+                float4 bvectile1 = *reinterpret_cast<float4 *>(&b_shared[tileIdx+1][threadIdx.y]);
+                float4 bvectile2 = *reinterpret_cast<float4 *>(&b_shared[tileIdx+2][threadIdx.y]);
+                float4 bvectile3 = *reinterpret_cast<float4 *>(&b_shared[tileIdx+3][threadIdx.y]);
+                accum.x += avec.x * bvectile0.x + avec.y * bvectile1.x + avec.z * bvectile2.x + avec.w * bvectile3.x;
+                accum.y += avec.x * bvectile0.y + avec.y * bvectile1.y + avec.z * bvectile2.y + avec.w * bvectile3.y;
+                accum.z += avec.x * bvectile0.z + avec.y * bvectile1.z + avec.z * bvectile2.z + avec.w * bvectile3.z;
+                accum.w += avec.x * bvectile0.w + avec.y * bvectile1.w + avec.z * bvectile2.w + avec.w * bvectile3.w;
             }
         }
     }
-    if (cIndex[1] < out_local_shape[1] && cIndex[2] < out_local_shape[2])
+    if (threadIdx.y % 4 == 0)
     {
-        int linearOutIndex = index_to_position(cIndex, out_local_strides, 3);
-        out[linearOutIndex] = accum; // c_shared[threadIdx.x][threadIdx.y];
+        if (cIndex[1] < out_local_shape[1] && cIndex[2]+threadY4Idx < out_local_shape[2])
+        {
+            int linearOutIndex = index_to_position(cIndex, out_local_strides, 3);
+            float4* outPtr4 = reinterpret_cast<float4*>(&out[linearOutIndex]);
+            outPtr4[threadY4Idx] = accum;   
+        }
     }
     /// END ASSIGN1_2
 }
