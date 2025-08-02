@@ -56,51 +56,12 @@ __global__ void MatrixMultiplyKernel(
     const int *b_shape,
     const int *b_strides)
 {
-    /**
-     * Multiply two (compact) matrices into an output (also comapct) matrix. Matrix a and b are both in a batch
-     * format, with shape [batch_size, m, n], [batch_size, n, p].
-     * Requirements:
-     * - All data must be first moved to shared memory.
-     * - Only read each cell in a and b once.
-     * - Only write to global memory once per kernel.
-     * There is guarantee that a_shape[0] == b_shape[0], a_shape[2] == b_shape[1],
-     * and out_shape[0] == a_shape[0], out_shape[1] == b_shape[1]
-     *
-     * Args:
-     *   out: compact 1D array of size batch_size x m x p to write the output to
-     *   out_shape: shape of the output array
-     *   out_strides: strides of the output array
-     *   a_storage: compact 1D array of size batch_size x m x n
-     *   a_shape: shape of the a array
-     *   a_strides: strides of the a array
-     *   b_storage: comapct 2D array of size batch_size x n x p
-     *   b_shape: shape of the b array
-     *   b_strides: strides of the b array
-     *
-     * Returns:
-     *   None (Fills in out array)
-     */
-
     __shared__ float a_shared[TILE][TILE + 4];
     __shared__ float b_shared[TILE][TILE + 4];
 
-    // In each block, we will compute a batch of the output matrix
-    // All the threads in the block will work together to compute this batch
     int batch = blockIdx.z;
     int a_batch_stride = a_shape[0] > 1 ? a_strides[0] : 0;
     int b_batch_stride = b_shape[0] > 1 ? b_strides[0] : 0;
-
-    /// BEGIN ASSIGN1_2
-    /// TODO
-    // Hints:
-    // 1. Compute the row and column of the output matrix this block will compute
-    // 2. Compute the position in the output array that this thread will write to
-    // 3. Iterate over tiles of the two input matrices, read the data into shared memory
-    // 4. Synchronize to make sure the data is available to all threads
-    // 5. Compute the output tile for this thread block
-    // 6. Synchronize to make sure all threads are done computing the output tile for (row, col)
-    // 7. Write the output to global memory
-
     int i = blockIdx.x;
     int j = blockIdx.y;
     int aIndex[3];
@@ -110,7 +71,7 @@ __global__ void MatrixMultiplyKernel(
     bIndex[0] = batch;
     cIndex[0] = batch;
     cIndex[1] = i * blockDim.x + threadIdx.x;
-    cIndex[2] = j * blockDim.y;
+    cIndex[2] = j * blockDim.y*4;
 
     int a_local_shape[3];
     int a_local_strides[3];
@@ -119,76 +80,75 @@ __global__ void MatrixMultiplyKernel(
     int out_local_shape[3];
     int out_local_strides[3];
 
-    for (int i = 0; i < 3; i++)
+    for (int idx = 0; idx < 3; idx++)
     {
-        a_local_shape[i] = a_shape[i];
-        a_local_strides[i] = a_strides[i];
-        b_local_shape[i] = b_shape[i];
-        b_local_strides[i] = b_strides[i];
-        out_local_shape[i] = out_shape[i];
-        out_local_strides[i] = out_strides[i];
+        a_local_shape[idx] = a_shape[idx];
+        a_local_strides[idx] = a_strides[idx];
+        b_local_shape[idx] = b_shape[idx];
+        b_local_strides[idx] = b_strides[idx];
+        out_local_shape[idx] = out_shape[idx];
+        out_local_strides[idx] = out_strides[idx];
     }
 
     aIndex[1] = cIndex[1];
     aIndex[2] = 0;
     int baseAIndex = index_to_position(aIndex, a_local_strides, 3);
     float4 accum = {0.f,0.f,0.f,0.f};
-    int threadY4Idx = threadIdx.y / 4;
+    int threadY4Idx = threadIdx.y;
 
     for (int k = 0; k < a_local_shape[2]; k += TILE)
     {
         float4 *a_shared4_ptr = reinterpret_cast<float4 *>(&a_shared[threadIdx.x][0]);
 
-        if (threadIdx.y % 4 == 0)
-        {
-            float4 const *a_storage4_ptr = reinterpret_cast<float4 const *>(&a_storage[baseAIndex + k]);
+        float4 const *a_storage4_ptr = reinterpret_cast<float4 const *>(&a_storage[baseAIndex + k]);
 
-            const bool inRangeA{aIndex[1] < a_local_shape[1] && k + threadY4Idx < a_local_shape[2]};
-            a_shared4_ptr[threadY4Idx] = inRangeA ? a_storage4_ptr[threadY4Idx] : float4{0.f, 0.f, 0.f, 0.f};
+        const bool inRangeA{aIndex[1] < a_local_shape[1] && k + threadY4Idx*4 < a_local_shape[2]};
+        a_shared4_ptr[threadY4Idx] = inRangeA ? a_storage4_ptr[threadY4Idx] : float4{0.f, 0.f, 0.f, 0.f};
 
-            bIndex[1] = k + threadIdx.x;
-            bIndex[2] = j * blockDim.y;
-            int baseBIndex = index_to_position(bIndex, b_local_strides, 3);
-            float4 const *b_storage4_ptr = reinterpret_cast<float4 const *>(&b_storage[baseBIndex]);
-            float4 *b_shared4_ptr = reinterpret_cast<float4 *>(&b_shared[threadIdx.x][0]);
-            const bool inRangeB{bIndex[1] < b_local_shape[1] && bIndex[2]+threadY4Idx < b_local_shape[2]};
-            b_shared4_ptr[threadY4Idx] = (inRangeB) ? b_storage4_ptr[threadY4Idx] : float4{0.f, 0.f, 0.f, 0.f};
-        }
+        bIndex[1] = k + threadIdx.x;
+        bIndex[2] = j * blockDim.y;
+        int baseBIndex = index_to_position(bIndex, b_local_strides, 3);
+        float4 const *b_storage4_ptr = reinterpret_cast<float4 const *>(&b_storage[baseBIndex]);
+        float4 *b_shared4_ptr = reinterpret_cast<float4 *>(&b_shared[threadIdx.x][0]);
+        const bool inRangeB{bIndex[1] < b_local_shape[1] && bIndex[2]+threadY4Idx*4 < b_local_shape[2]};
+        b_shared4_ptr[threadY4Idx] = (inRangeB) ? b_storage4_ptr[threadY4Idx] : float4{0.f, 0.f, 0.f, 0.f};
         __syncthreads();
 
-        if (threadIdx.y % 4 == 0)
+        #pragma unroll
+        for (int tileIdx = 0; tileIdx < TILE; tileIdx+=4)
         {
-            #pragma unroll
-            for (int tileIdx = 0; tileIdx < TILE; tileIdx+=4)
-            {
-                float4 avec = a_shared4_ptr[tileIdx/4];
-                float4 bvectile0 = *reinterpret_cast<float4 *>(&b_shared[tileIdx][threadIdx.y]);
-                float4 bvectile1 = *reinterpret_cast<float4 *>(&b_shared[tileIdx+1][threadIdx.y]);
-                float4 bvectile2 = *reinterpret_cast<float4 *>(&b_shared[tileIdx+2][threadIdx.y]);
-                float4 bvectile3 = *reinterpret_cast<float4 *>(&b_shared[tileIdx+3][threadIdx.y]);
-                accum.x += avec.x * bvectile0.x + avec.y * bvectile1.x + avec.z * bvectile2.x + avec.w * bvectile3.x;
-                accum.y += avec.x * bvectile0.y + avec.y * bvectile1.y + avec.z * bvectile2.y + avec.w * bvectile3.y;
-                accum.z += avec.x * bvectile0.z + avec.y * bvectile1.z + avec.z * bvectile2.z + avec.w * bvectile3.z;
-                accum.w += avec.x * bvectile0.w + avec.y * bvectile1.w + avec.z * bvectile2.w + avec.w * bvectile3.w;
-            }
+            float4 avec = a_shared4_ptr[tileIdx/4];
+            float4 bvectile0 = *reinterpret_cast<float4 *>(&b_shared[tileIdx][threadIdx.y*4]);
+            float4 bvectile1 = *reinterpret_cast<float4 *>(&b_shared[tileIdx+1][threadIdx.y*4]);
+            float4 bvectile2 = *reinterpret_cast<float4 *>(&b_shared[tileIdx+2][threadIdx.y*4]);
+            float4 bvectile3 = *reinterpret_cast<float4 *>(&b_shared[tileIdx+3][threadIdx.y*4]);
+            accum.x += avec.x * bvectile0.x + avec.y * bvectile1.x + avec.z * bvectile2.x + avec.w * bvectile3.x;
+            accum.y += avec.x * bvectile0.y + avec.y * bvectile1.y + avec.z * bvectile2.y + avec.w * bvectile3.y;
+            accum.z += avec.x * bvectile0.z + avec.y * bvectile1.z + avec.z * bvectile2.z + avec.w * bvectile3.z;
+            accum.w += avec.x * bvectile0.w + avec.y * bvectile1.w + avec.z * bvectile2.w + avec.w * bvectile3.w;
+            // printf("avec %f %f %f %f\n", avec.x, avec.y, avec.z, avec.w);
+            // printf("bvectile0 %f %f %f %f\n", bvectile0.x, bvectile0.y, bvectile0.z, bvectile0.w);
+            // printf("bvectile1 %f %f %f %f\n", bvectile1.x, bvectile1.y, bvectile1.z, bvectile1.w);
+            // printf("bvectile2 %f %f %f %f\n", bvectile2.x, bvectile2.y, bvectile2.z, bvectile2.w);
+            // printf("bvectile3 %f %f %f %f\n", bvectile3.x, bvectile3.y, bvectile3.z, bvectile3.w);
         }
     }
-    if (threadIdx.y % 4 == 0)
+    if (cIndex[1] < out_local_shape[1] && cIndex[2]+threadY4Idx*4 < out_local_shape[2])
     {
-        if (cIndex[1] < out_local_shape[1] && cIndex[2]+threadY4Idx < out_local_shape[2])
-        {
-            int linearOutIndex = index_to_position(cIndex, out_local_strides, 3);
-            float4* outPtr4 = reinterpret_cast<float4*>(&out[linearOutIndex]);
-            outPtr4[threadY4Idx] = accum;   
-        }
+        int linearOutIndex = index_to_position(cIndex, out_local_strides, 3);
+        float4* outPtr4 = reinterpret_cast<float4*>(&out[linearOutIndex]);
+        // printf("idx: %d %f %f %f %f\n", linearOutIndex+threadY4Idx*4, accum.x, accum.y, accum.z, accum.w);
+        outPtr4[threadY4Idx] = accum;   
     }
     /// END ASSIGN1_2
 }
 
+
 // ──────────────────────────────── host main ───────────────────────
 int main()
 {
-    constexpr int B = 1, M = 4096, N = 4096, P = 4096;
+    int size = 4096;
+    int B = 1, M = size, N = size, P = size;
     const size_t bytesA = size_t(B) * M * N * sizeof(float);
     const size_t bytesB = size_t(B) * N * P * sizeof(float);
     const size_t bytesC = size_t(B) * M * P * sizeof(float);
@@ -240,7 +200,7 @@ int main()
     CHECK(cudaMemcpy(d_out_strides, h_out_strides, 3 * sizeof(int), cudaMemcpyHostToDevice));
 
     // Kernel launch configuration -----------------------------------
-    dim3 block(TILE, TILE, 1);
+    dim3 block(TILE, TILE/4, 1);
     dim3 grid((M + TILE - 1) / TILE,
               (P + TILE - 1) / TILE,
               B);
@@ -257,8 +217,11 @@ int main()
 
     // (optional) quick sanity check – C should be all N when A,B filled with 1s
     double max_err = 0.;
-    for (size_t i = 0; i < (bytesC / sizeof(float)); ++i)
+    for (int i = 0; i < (bytesC / sizeof(float)); ++i)
+    {
+        // printf("(%d %f),", i, hC[i]);
         max_err = fmax(max_err, fabs(hC[i] - float(N)));
+    }
     printf("max error = %g (should be 0)\n", max_err);
 
     // clean up
